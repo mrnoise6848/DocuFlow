@@ -52,6 +52,7 @@ class DocumentController(private val context: Context, private val scope: Corout
         val pageOffset = if (loadMore) offset else 0
         val q = query; val c = category; val f = favorites; val t = tag
         val result = withContext(Dispatchers.IO) { store.search(q, c, f, t, 100, pageOffset) }
+        currentCoroutineContext().ensureActive()
         documents = if (loadMore) documents + result else result
         offset = pageOffset + result.size
         hasMore = result.size == 100
@@ -67,7 +68,7 @@ class DocumentController(private val context: Context, private val scope: Corout
     }
     fun loadMore() {
         searchJob?.cancel()
-        searchJob = scope.launch { try { refresh(true) } catch (_: Exception) { message = "Could not load more documents" } }
+        searchJob = scope.launch { try { refresh(true) } catch (cancel: CancellationException) { throw cancel } catch (_: Exception) { message = "Could not load more documents" } }
     }
     fun open(id: String) = runWork {
         selected = withContext(Dispatchers.IO) { store.get(id) }
@@ -102,7 +103,7 @@ class DocumentController(private val context: Context, private val scope: Corout
                     catch (_: Exception) { failures++ }
                 }
             }
-            check(imported.isNotEmpty()) { "No readable pages could be imported" }
+            if (imported.isEmpty()) throw WorkflowException("No readable pages could be imported. Check the file format and the 50-page limit.")
             val pages = imported.map { Page(UUID.randomUUID().toString(), it.path) }
             val now = System.currentTimeMillis()
             val document = base ?: Document(UUID.randomUUID().toString(), DocumentNaming.suggest("", now), now)
@@ -166,6 +167,7 @@ class DocumentController(private val context: Context, private val scope: Corout
         } catch (error: Exception) { file.delete(); throw error }
     }
     private fun friendlyError(error: Exception): String = when (error) {
+        is WorkflowException -> error.message ?: "Operation could not finish"
         is java.io.IOException -> "File operation failed. Check available storage and access, then retry."
         is SecurityException -> "File access was denied. Select the file again."
         else -> "Operation could not finish. Check the pages and retry."
