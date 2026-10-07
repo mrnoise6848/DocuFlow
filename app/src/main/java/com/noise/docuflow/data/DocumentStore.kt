@@ -75,6 +75,33 @@ class DocumentStore(context: Context) : SQLiteOpenHelper(context, "documents.db"
             }
         }
     }
+    fun search(query: String, category: String? = null, favorite: Boolean = false, tag: String = "",
+        limit: Int = 100, offset: Int = 0): List<DocumentSummary> {
+        val tokens = Regex("[\\p{L}\\p{N}]+").findAll(query.take(300)).map { it.value }.take(20).toList()
+        val conditions = mutableListOf<String>()
+        val arguments = mutableListOf<String>()
+        if (tokens.isNotEmpty()) {
+            conditions += "search MATCH ?"
+            arguments += tokens.joinToString(" AND ") { "\"$it\"*" }
+        }
+        if (category != null) { conditions += "d.category=?"; arguments += category }
+        if (favorite) conditions += "d.favorite=1"
+        if (tag.isNotBlank()) {
+            conditions += "(',' || d.tags || ',') LIKE ? ESCAPE '\\'"
+            arguments += "%," + tag.trim().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + ",%"
+        }
+        return summaries(if (conditions.isEmpty()) "" else "WHERE " + conditions.joinToString(" AND "),
+            arguments.toTypedArray(), limit, offset,
+            if (tokens.isEmpty()) "" else "JOIN search ON search.document_id=d.id",
+            if (tokens.isEmpty()) "''" else "snippet(search, '[', ']', '…', 2, 24)")
+    }
+    fun rebuildIndex() = transaction { db ->
+        db.delete("search", null, null)
+        db.rawQuery("SELECT id FROM documents", null).use { c ->
+            while (c.moveToNext()) get(c.getString(0))?.let { index(db, it) }
+        }
+    }
+
     fun delete(id: String) {
         val files = get(id)?.pages?.flatMap { listOf(it.source, it.image) }.orEmpty()
         transaction { db ->
