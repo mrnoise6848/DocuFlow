@@ -9,7 +9,7 @@ import kotlinx.coroutines.*
 import java.io.File
 import java.util.UUID
 
-class DocumentController(private val context: Context, private val scope: CoroutineScope) {
+class DocumentController(private val context: Context, private val scope: CoroutineScope, initialSelection: String? = null) {
     private val store = DocumentStore(context)
     var documents by mutableStateOf<List<DocumentSummary>>(emptyList()); private set
     var selected by mutableStateOf<Document?>(null); private set
@@ -33,6 +33,7 @@ class DocumentController(private val context: Context, private val scope: Corout
                     it.lastModified() < System.currentTimeMillis() - 24 * 60 * 60 * 1000L
                 }?.forEach { it.delete() }
             }
+            if (initialSelection != null) selected = withContext(Dispatchers.IO) { store.get(initialSelection) }
             refresh()
         }
     }
