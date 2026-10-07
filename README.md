@@ -27,7 +27,7 @@ flowchart LR
 
 A single document spans image files, ordered page records, recognized text and a derived search index. Edits need to keep all four aligned.
 
-[DocumentStore](app/src/main/java/com/noise/docuflow/data/DocumentStore.kt) updates metadata, page order and SQLite FTS4 entries in one transaction. File deletion follows the metadata commit, and unreferenced files can be recovered by cleanup after 24 hours. Search can be rebuilt from stored documents.
+[DocumentStore](app/src/main/java/com/noise/docuflow/data/DocumentStore.kt) updates metadata, page order and SQLite FTS4 entries in one transaction. File deletion follows the metadata commit, and unreferenced files older than 24 hours can be removed during cleanup. Search can be rebuilt from stored documents.
 
 [DocumentController](app/src/main/java/com/noise/docuflow/DocumentController.kt) treats cancellation as part of the workflow: imports remove uncommitted files, short persistence steps finish before cancellation is delivered, and native OCR completes before its bitmap and recognizer are released. Missing source pages remain visible so the user can replace them.
 
