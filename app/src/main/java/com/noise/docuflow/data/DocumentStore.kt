@@ -24,7 +24,9 @@ class DocumentStore(context: Context) : SQLiteOpenHelper(context, "documents.db"
         db.beginTransaction()
         try { block(db); db.setTransactionSuccessful() } finally { db.endTransaction() }
     }
-    fun save(document: Document) = transaction { db ->
+    fun save(document: Document) {
+        val previous = get(document.id)?.pages?.flatMap { listOf(it.source, it.image) }.orEmpty()
+        transaction { db ->
         val values = ContentValues().apply {
             put("id", document.id); put("title", document.title); put("created", document.created)
             put("modified", document.modified); put("category", document.category)
@@ -40,6 +42,11 @@ class DocumentStore(context: Context) : SQLiteOpenHelper(context, "documents.db"
             })
         }
         index(db, document)
+        }
+        val retained = document.pages.flatMap { listOf(it.source, it.image) }.toSet()
+        previous.distinct().filter { it !in retained }.forEach { path ->
+            File(path).takeIf { it.parentFile == pageDirectory }?.delete()
+        }
     }
     private fun index(db: SQLiteDatabase, document: Document) {
         db.delete("search", "document_id=?", arrayOf(document.id))
@@ -100,6 +107,14 @@ class DocumentStore(context: Context) : SQLiteOpenHelper(context, "documents.db"
         db.rawQuery("SELECT id FROM documents", null).use { c ->
             while (c.moveToNext()) get(c.getString(0))?.let { index(db, it) }
         }
+    }
+
+    fun recoverFiles() {
+        val referenced = readableDatabase.rawQuery("SELECT source,image FROM pages", null).use { c ->
+            buildSet { while (c.moveToNext()) { add(c.getString(0)); add(c.getString(1)) } }
+        }
+        val cutoff = System.currentTimeMillis() - 24 * 60 * 60 * 1000L
+        pageDirectory.listFiles()?.filter { it.path !in referenced && it.lastModified() < cutoff }?.forEach { it.delete() }
     }
 
     fun delete(id: String) {
