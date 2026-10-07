@@ -1,57 +1,53 @@
 # DocuFlow
 
-**Turn scanned paper and imported files into a document library you can search on your device.**
+**Scan it once. Find it by what it says.**
 
-A photo of a receipt, letter or form preserves its appearance, but finding it later still depends on remembering a filename or browsing thumbnails. DocuFlow connects capture to retrieval: page cleanup and Latin OCR feed a local full-text index, so words inside a document become a way to find it again.
+A folder of document photos is easy to create and hard to search. Months later, the useful clue may be a word on the page rather than the filename you gave it.
 
-The workflow keeps originals, editable page images and recognized text together. Documents can be named, tagged, categorized, marked as favorites and exported or shared without an account or document-upload service.
+DocuFlow turns scans, images and imported PDFs into a searchable Android document library. Latin OCR makes page text available to local search; titles, tags, categories and favorites provide another way back to the right document. Capture, reading and retrieval stay together on the device.
 
-## Capture is only the beginning
+## A document's path through the app
 
-```text
-ML Kit scanner / system image picker / PDF import
-    → private page sources, with originals preserved
-    → review, rotate, trim, filter and reorder
-    → per-page Latin OCR
-    → title + text + tags + category in SQLite FTS4
-    → search with snippets → view → PDF export or sharing
+**Capture and review.** Scan with perspective correction and enhancement, or import images/PDFs through the system picker. Rotate, trim, filter and reorder pages while keeping the original page sources available.
+
+**Recognize and organize.** Run OCR per page, inspect the recognized text, and edit suggested names/categories. Tags and favorites support the way you organize your own library.
+
+**Find and use.** Search across titles, page text, tags and categories. Snippets show where a match came from. Open the document, select OCR text, or export/share a multipage PDF.
+
+```mermaid
+flowchart LR
+    Capture[Scan or import] --> Pages[Review pages]
+    Pages --> OCR[Latin OCR]
+    OCR --> Search[Local full-text index]
+    Search --> Find[Search with snippets]
+    Find --> Use[Read, copy text or export]
 ```
 
-The scanner supplies perspective correction and enhancement. File import is a separate route for existing images and PDFs. Editing supports adding, replacing and deleting pages, with up to 50 pages per document. Naming and category suggestions remain editable.
+## Keeping the library consistent
 
-Search covers both metadata and recognized page text. Results include snippets from indexed text and filters for organization; users do not have to open every document to inspect its contents. See [document pipeline](docs/document-pipeline.md), [OCR](docs/ocr.md) and [search](docs/search.md).
+A single document spans image files, ordered page records, recognized text and a derived search index. Edits need to keep all four aligned.
 
-## Keeping files, text and search consistent
+[DocumentStore](app/src/main/java/com/noise/docuflow/data/DocumentStore.kt) updates metadata, page order and SQLite FTS4 entries in one transaction. File deletion follows the metadata commit, and unreferenced files can be recovered by cleanup after 24 hours. Search can be rebuilt from stored documents.
 
-The engineering challenge is that a document spans private image files, ordered page records, OCR results and a derived search index.
+[DocumentController](app/src/main/java/com/noise/docuflow/DocumentController.kt) treats cancellation as part of the workflow: imports remove uncommitted files, short persistence steps finish before cancellation is delivered, and native OCR completes before its bitmap and recognizer are released. Missing source pages remain visible so the user can replace them.
 
-- **Transactional metadata:** page order, document metadata and FTS updates share a SQLite transaction. Old files are deleted after metadata commits; unreferenced files are recovered after 24 hours. Missing pages remain visible as unavailable.
-- **Cancellation at safe boundaries:** imports clean up uncommitted files. A native OCR operation is awaited before releasing its bitmap and recognizer; cancellation is checked before publishing its result. Short persistence steps finish in a non-cancellable section.
-- **Bounded processing:** PDFs are copied to seekable private temporary storage with a 150 MB import limit, then rasterized one page at a time. Library queries paginate results without loading full OCR bodies.
-- **Recoverable search:** the index can be rebuilt from stored documents. Search sanitizes word tokens and binds parameters instead of exposing arbitrary FTS syntax.
+The app bounds each document to 50 pages. PDF import uses seekable temporary storage with a 150 MB limit and rasterizes one page at a time. Library results are paginated without loading full OCR bodies. [Pipeline](docs/document-pipeline.md) · [Search](docs/search.md) · [Architecture](docs/architecture.md)
 
-These choices are visible in [DocumentController](app/src/main/java/com/noise/docuflow/DocumentController.kt), [DocumentStore](app/src/main/java/com/noise/docuflow/data/DocumentStore.kt), [PDF import](app/src/main/java/com/noise/docuflow/processing/PdfImporter.kt) and [OCR processing](app/src/main/java/com/noise/docuflow/processing/OcrProcessor.kt). The app uses one Kotlin/Compose module and Android's SQLite, PDF and file-picker APIs. See [architecture](docs/architecture.md) and [decisions](docs/decisions/).
+## Searchable library, portable page images
 
-## What stays local—and what export means
+OCR text powers the local library. Export produces an A4 PDF of the visible pages, without a searchable text layer. Imported PDFs are rasterized, so original text layers and attachments are not retained. This is a page-based document workflow rather than a lossless PDF editor.
 
-Documents reside in private app storage. The app declares no network permission and excludes its library from backup/device transfer. The ML Kit scanner can download components through Google Play Services on first use. Sharing explicitly grants another app temporary access through FileProvider. See [privacy](docs/privacy.md).
+Documents live in private storage with backup/device transfer excluded. The app declares no network permission or document-upload integration. The scanner may download components through Google Play Services on first use; explicit sharing grants the selected recipient temporary access. [Privacy](docs/privacy.md)
 
-PDF export produces multipage A4 pages in standard or high quality. **The exported PDF has no searchable text layer**: OCR search belongs to the local library. Imported PDFs are rasterized; their original text layer and attachments are not retained.
+## Try the complete loop
 
-## Try the workflow
-
-Use the JDK and Android SDK versions configured in the existing project (JDK 25, SDK 37):
+Use the configured JDK 25 / Android SDK 37 toolchain:
 
 ```bash
 ./gradlew assembleDebug
+adb install app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Scan or import a document, run OCR, search for a word inside a page, edit its title/tags, and export it through the system file picker. Check cancellation, missing/corrupt files and page replacement before relying on a large library.
+Import a document with Latin text, run OCR, search for a word inside a page, then rename/tag it and export. This exercises the value of the library beyond the initial scan.
 
-The [implementation record](docs/implementation.md) reports a successful debug build and lint pass, with template warnings. Device/manual validation, collection benchmarks and a substantive automated test suite remain absent. No screenshots or benchmark results are supplied here.
-
-## Constraints
-
-Latin OCR does not cover Persian/Arabic. Scanner availability depends on compatible Google Play Services and device resources; file import works separately. There is no additional document encryption or sync service. Cancellation can wait for native work; interrupted system exports may leave a partial file to remove. Uninstalling removes the local library.
-
-No project license has been selected. Google SDK terms and sample licensing are documented in the scanner decision.
+The [build record](docs/implementation.md) reports successful debug packaging and lint. Device acceptance testing and large-library profiling remain open. OCR does not cover Persian/Arabic; scanner support depends on Google Play Services and device resources. There is no extra document encryption, and uninstalling removes the library. No project license is selected.
