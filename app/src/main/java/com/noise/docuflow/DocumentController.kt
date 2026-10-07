@@ -11,6 +11,8 @@ import java.util.UUID
 
 class DocumentController(private val context: Context, private val scope: CoroutineScope, initialSelection: String? = null) {
     private val store = DocumentStore(context)
+    private val controllerJob = SupervisorJob(scope.coroutineContext[Job])
+    private val operationScope = CoroutineScope(scope.coroutineContext + controllerJob)
     var documents by mutableStateOf<List<DocumentSummary>>(emptyList()); private set
     var selected by mutableStateOf<Document?>(null); private set
     var busy by mutableStateOf(false); private set
@@ -26,6 +28,7 @@ class DocumentController(private val context: Context, private val scope: Corout
     private var offset = 0
 
     init {
+        controllerJob.invokeOnCompletion { store.close() }
         runWork {
             withContext(Dispatchers.IO) {
                 store.recoverFiles()
@@ -40,7 +43,7 @@ class DocumentController(private val context: Context, private val scope: Corout
     private fun runWork(block: suspend () -> Unit) {
         if (busy) return
         busy = true
-        work = scope.launch {
+        work = operationScope.launch {
             try { block() }
             catch (cancel: CancellationException) { message = "Operation canceled"; throw cancel }
             catch (error: Exception) { message = friendlyError(error) }
@@ -61,7 +64,7 @@ class DocumentController(private val context: Context, private val scope: Corout
     fun filter(text: String = query, selectedCategory: String? = category, onlyFavorites: Boolean = favorites, selectedTag: String = tag) {
         query = text; category = selectedCategory; favorites = onlyFavorites; tag = selectedTag
         searchJob?.cancel()
-        searchJob = scope.launch {
+        searchJob = operationScope.launch {
             delay(250)
             try { refresh() } catch (cancel: CancellationException) { throw cancel }
             catch (_: Exception) { message = "Search unavailable. Try rebuilding the index." }
@@ -69,7 +72,7 @@ class DocumentController(private val context: Context, private val scope: Corout
     }
     fun loadMore() {
         searchJob?.cancel()
-        searchJob = scope.launch { try { refresh(true) } catch (cancel: CancellationException) { throw cancel } catch (_: Exception) { message = "Could not load more documents" } }
+        searchJob = operationScope.launch { try { refresh(true) } catch (cancel: CancellationException) { throw cancel } catch (_: Exception) { message = "Could not load more documents" } }
     }
     fun open(id: String) = runWork {
         selected = withContext(Dispatchers.IO) { store.get(id) }
@@ -77,7 +80,7 @@ class DocumentController(private val context: Context, private val scope: Corout
     }
     fun back() { if (!busy) { selected = null; filter() } }
     fun save(document: Document) = runWork {
-        persist(document.copy(modified = System.currentTimeMillis()))
+        withContext(NonCancellable) { persist(document.copy(modified = System.currentTimeMillis())) }
     }
     private suspend fun persist(document: Document) {
         withContext(Dispatchers.IO) { store.save(document) }
@@ -85,11 +88,18 @@ class DocumentController(private val context: Context, private val scope: Corout
         try { refresh() } catch (cancel: CancellationException) { throw cancel }
         catch (_: Exception) { message = "Changes saved. Refresh the library to update the listing." }
     }
-    fun import(uris: List<Uri>, replacement: Int? = null) = runWork {
+    fun import(uris: List<Uri>, replacement: Int? = null) {
+        val previousWork = work
+        operationScope.launch {
+            previousWork?.join()
+            importNow(uris, replacement)
+        }
+    }
+    private fun importNow(uris: List<Uri>, replacement: Int?) = runWork {
         val base = selected
         val imported = mutableListOf<File>()
         var committed = false
-        var failures = 0
+        var failures = (uris.size - 50).coerceAtLeast(0)
         try {
             withContext(Dispatchers.IO) {
                 val room = if (replacement == null) 50 - (base?.pages?.size ?: 0) else 1
@@ -142,14 +152,23 @@ class DocumentController(private val context: Context, private val scope: Corout
     }
     fun delete() = runWork {
         val id = selected?.id ?: return@runWork
-        withContext(NonCancellable + Dispatchers.IO) { store.delete(id) }
-        selected = null; refresh(); message = "Document deleted"
+        withContext(NonCancellable) {
+            withContext(Dispatchers.IO) { store.delete(id) }
+            selected = null; refresh(); message = "Document deleted"
+        }
     }
     fun rebuild() = runWork {
         withContext(Dispatchers.IO) { store.rebuildIndex() }
         refresh(); message = "Search index rebuilt"
     }
-    fun export(uri: Uri) = runWork {
+    fun export(uri: Uri) {
+        val previousWork = work
+        operationScope.launch {
+            previousWork?.join()
+            exportNow(uri)
+        }
+    }
+    private fun exportNow(uri: Uri) = runWork {
         val document = selected ?: return@runWork
         withContext(Dispatchers.IO) {
             context.contentResolver.openOutputStream(uri, "wt")?.use { PdfExporter.write(document, it, highQuality) }

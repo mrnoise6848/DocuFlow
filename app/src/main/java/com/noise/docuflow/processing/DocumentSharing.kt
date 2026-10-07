@@ -20,6 +20,7 @@ object DocumentSharing {
         context.startActivity(Intent.createChooser(intent, "Share document"))
     }
     fun open(context: Context, file: File) {
+        require(file.isFile) { "Page is unavailable" }
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
         context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "image/jpeg")
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))

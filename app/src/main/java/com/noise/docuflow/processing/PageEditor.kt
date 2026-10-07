@@ -1,6 +1,7 @@
 package com.noise.docuflow.processing
 
 import android.graphics.*
+import androidx.core.graphics.createBitmap
 import java.io.File
 import java.util.UUID
 
@@ -13,7 +14,7 @@ object PageEditor {
             (input.width * (1 - 2 * edge)).toInt().coerceAtLeast(1),
             (input.height * (1 - 2 * edge)).toInt().coerceAtLeast(1),
             Matrix().apply { postRotate(rotation.toFloat()) }, true)
-        val output = Bitmap.createBitmap(crop.width, crop.height, Bitmap.Config.ARGB_8888)
+        val output = createBitmap(crop.width, crop.height, Bitmap.Config.ARGB_8888)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG)
         if (filter != Filter.ORIGINAL) {
             val matrix = ColorMatrix().apply { setSaturation(0f) }

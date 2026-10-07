@@ -24,8 +24,11 @@ class MainActivity : ComponentActivity() {
     private lateinit var controller: DocumentController
     private var replacement: Int? = null
     private var scannerPending by mutableStateOf(false)
+    private var pickerPending by mutableStateOf(false)
+    private var scanLaunched = false
     private val scanLauncher = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
         scannerPending = false
+        scanLaunched = false
         if (result.resultCode == Activity.RESULT_OK) {
             val pages = GmsDocumentScanningResult.fromActivityResultIntent(result.data)?.pages.orEmpty()
             if (pages.isNotEmpty()) controller.import(pages.map { it.imageUri })
@@ -33,15 +36,20 @@ class MainActivity : ComponentActivity() {
         }
     }
     private val importLauncher = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        pickerPending = false
         val target = replacement
         replacement = null
         if (uris.isNotEmpty()) controller.import(if (target == null) uris else uris.take(1), target)
     }
     private val exportLauncher = registerForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
+        pickerPending = false
         if (uri != null) controller.export(uri)
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        scanLaunched = savedInstanceState?.getBoolean("scanLaunched") ?: false
+        scannerPending = scanLaunched
+        pickerPending = savedInstanceState?.getBoolean("pickerPending") ?: false
         replacement = savedInstanceState?.getInt("replacement", -1)?.takeIf { it >= 0 }
         controller = DocumentController(applicationContext, lifecycleScope, savedInstanceState?.getString("document"))
         enableEdgeToEdge()
@@ -55,7 +63,7 @@ class MainActivity : ComponentActivity() {
                         if (controller.message == message) controller.message = null
                     }
                 }
-                val busy = controller.busy || scannerPending
+                val busy = controller.busy || scannerPending || pickerPending
                 BackHandler(controller.selected != null) {
                     if (!busy) controller.back()
                 }
@@ -64,7 +72,7 @@ class MainActivity : ComponentActivity() {
                         if (busy) {
                             LinearProgressIndicator(Modifier.fillMaxWidth())
                             Row(Modifier.padding(horizontal = 20.dp)) {
-                                Text(if (scannerPending) "Opening scanner…" else "Processing…", Modifier.weight(1f))
+                                Text(if (scannerPending) "Opening scanner…" else if (pickerPending) "Choosing a file…" else "Processing…", Modifier.weight(1f))
                                 if (controller.busy) TextButton(onClick = controller::cancel) { Text("Cancel") }
                             }
                         }
@@ -85,7 +93,11 @@ class MainActivity : ComponentActivity() {
                                 DocumentDetail(
                                     document, busy, controller::save, controller::back, ::scan, ::import,
                                     controller::ocr, controller::edit,
-                                    { exportLauncher.launch(PdfExporter.filename(document.title)) },
+                                    {
+                                        pickerPending = true
+                                        try { exportLauncher.launch(PdfExporter.filename(document.title)) }
+                                        catch (_: Exception) { pickerPending = false; controller.report("System save picker is unavailable.") }
+                                    },
                                     { pdf -> controller.share(pdf) { files, mime ->
                                         try { DocumentSharing.share(this@MainActivity, files, mime) }
                                         catch (_: Exception) { controller.report("No compatible sharing app is available.") }
@@ -105,8 +117,9 @@ class MainActivity : ComponentActivity() {
     }
     private fun import(index: Int?) {
         replacement = index
+        pickerPending = true
         try { importLauncher.launch(arrayOf("image/*", "application/pdf")) }
-        catch (_: Exception) { replacement = null; controller.report("System file picker is unavailable.") }
+        catch (_: Exception) { pickerPending = false; replacement = null; controller.report("System file picker is unavailable.") }
     }
     private fun scan() {
         if ((controller.selected?.pages?.size ?: 0) >= 50) {
@@ -117,8 +130,8 @@ class MainActivity : ComponentActivity() {
         Capture.scanner.getStartScanIntent(this)
             .addOnSuccessListener { sender ->
                 if (!isDestroyed) {
-                    try { scanLauncher.launch(IntentSenderRequest.Builder(sender).build()) }
-                    catch (_: Exception) { scannerPending = false; controller.report("Scanner could not open. Try importing instead.") }
+                    try { scanLaunched = true; scanLauncher.launch(IntentSenderRequest.Builder(sender).build()) }
+                    catch (_: Exception) { scanLaunched = false; scannerPending = false; controller.report("Scanner could not open. Try importing instead.") }
                 }
             }
             .addOnFailureListener {
@@ -127,6 +140,8 @@ class MainActivity : ComponentActivity() {
             }
     }
     override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean("scanLaunched", scanLaunched)
+        outState.putBoolean("pickerPending", pickerPending)
         outState.putString("document", controller.selected?.id)
         outState.putInt("replacement", replacement ?: -1)
         super.onSaveInstanceState(outState)

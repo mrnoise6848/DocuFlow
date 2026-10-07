@@ -7,6 +7,7 @@ import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import androidx.core.graphics.createBitmap
 import java.io.File
 import java.util.UUID
 
@@ -37,7 +38,7 @@ object PdfImporter {
                         currentCoroutineContext().ensureActive()
                         renderer.openPage(index).use { page ->
                             val scale = 2000f / maxOf(page.width, page.height).coerceAtLeast(1)
-                            val bitmap = Bitmap.createBitmap((page.width * scale).toInt().coerceAtLeast(1),
+                            val bitmap = createBitmap((page.width * scale).toInt().coerceAtLeast(1),
                                 (page.height * scale).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
                             try {
                                 bitmap.eraseColor(Color.WHITE)

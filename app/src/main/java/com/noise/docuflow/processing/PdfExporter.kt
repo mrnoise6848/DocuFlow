@@ -11,7 +11,8 @@ object PdfExporter {
     fun filename(title: String): String = title.replace(Regex("[^\\p{L}\\p{N}._-]+"), "_").trim('_').take(80).ifBlank { "Document" } + ".pdf"
     suspend fun write(document: Document, stream: OutputStream, highQuality: Boolean = false) {
         require(document.pages.isNotEmpty()) { "Document has no pages" }
-        PdfDocument().use { pdf ->
+        val pdf = PdfDocument()
+        try {
             document.pages.forEachIndexed { index, source ->
                 currentCoroutineContext().ensureActive()
                 val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -34,6 +35,6 @@ object PdfExporter {
             }
             currentCoroutineContext().ensureActive()
             pdf.writeTo(stream)
-        }
+        } finally { pdf.close() }
     }
 }

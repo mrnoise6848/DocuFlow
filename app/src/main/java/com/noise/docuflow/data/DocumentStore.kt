@@ -12,12 +12,14 @@ class DocumentStore(context: Context) : SQLiteOpenHelper(context, "documents.db"
         db.execSQL("CREATE TABLE documents(id TEXT PRIMARY KEY,title TEXT NOT NULL,created INTEGER,modified INTEGER,category TEXT,tags TEXT,favorite INTEGER)")
         db.execSQL("CREATE TABLE pages(id TEXT PRIMARY KEY,document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,position INTEGER,source TEXT,image TEXT,text TEXT,ocr TEXT)")
         db.execSQL("CREATE INDEX pages_document ON pages(document_id,position)")
+        db.execSQL("CREATE INDEX documents_modified ON documents(modified DESC,id)")
+        db.execSQL("CREATE INDEX documents_category ON documents(category,favorite)")
         createIndex(db)
     }
     override fun onConfigure(db: SQLiteDatabase) { db.setForeignKeyConstraintsEnabled(true) }
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
     private fun createIndex(db: SQLiteDatabase) {
-        db.execSQL("CREATE VIRTUAL TABLE IF NOT EXISTS search USING fts4(document_id UNINDEXED,title,body,tags,category,tokenize=unicode61)")
+        db.execSQL("CREATE VIRTUAL TABLE IF NOT EXISTS search USING fts4(document_id,title,body,tags,category,notindexed=document_id,tokenize=unicode61)")
     }
     private inline fun transaction(block: (SQLiteDatabase) -> Unit) {
         val db = writableDatabase
@@ -27,21 +29,21 @@ class DocumentStore(context: Context) : SQLiteOpenHelper(context, "documents.db"
     fun save(document: Document) {
         val previous = get(document.id)?.pages?.flatMap { listOf(it.source, it.image) }.orEmpty()
         transaction { db ->
-        val values = ContentValues().apply {
-            put("id", document.id); put("title", document.title); put("created", document.created)
-            put("modified", document.modified); put("category", document.category)
-            put("tags", document.tags); put("favorite", if (document.favorite) 1 else 0)
-        }
-        // REPLACE would delete pages through the foreign key; explicitly update instead.
-        if (db.update("documents", values, "id=?", arrayOf(document.id)) == 0) db.insertOrThrow("documents", null, values)
-        db.delete("pages", "document_id=?", arrayOf(document.id))
-        document.pages.forEachIndexed { index, page ->
-            db.insertOrThrow("pages", null, ContentValues().apply {
-                put("id", page.id); put("document_id", document.id); put("position", index)
-                put("source", page.source); put("image", page.image); put("text", page.text); put("ocr", page.ocr)
-            })
-        }
-        index(db, document)
+            val values = ContentValues().apply {
+                put("id", document.id); put("title", document.title); put("created", document.created)
+                put("modified", document.modified); put("category", document.category)
+                put("tags", document.tags); put("favorite", if (document.favorite) 1 else 0)
+            }
+            // REPLACE would delete pages through the foreign key; explicitly update instead.
+            if (db.update("documents", values, "id=?", arrayOf(document.id)) == 0) db.insertOrThrow("documents", null, values)
+            db.delete("pages", "document_id=?", arrayOf(document.id))
+            document.pages.forEachIndexed { index, page ->
+                db.insertOrThrow("pages", null, ContentValues().apply {
+                    put("id", page.id); put("document_id", document.id); put("position", index)
+                    put("source", page.source); put("image", page.image); put("text", page.text); put("ocr", page.ocr)
+                })
+            }
+            index(db, document)
         }
         val retained = document.pages.flatMap { listOf(it.source, it.image) }.toSet()
         previous.distinct().filter { it !in retained }.forEach { path ->
