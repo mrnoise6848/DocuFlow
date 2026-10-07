@@ -27,7 +27,12 @@ class DocumentController(private val context: Context, private val scope: Corout
 
     init {
         runWork {
-            withContext(Dispatchers.IO) { store.recoverFiles() }
+            withContext(Dispatchers.IO) {
+                store.recoverFiles()
+                File(context.cacheDir, "exports").listFiles()?.filter {
+                    it.lastModified() < System.currentTimeMillis() - 24 * 60 * 60 * 1000L
+                }?.forEach { it.delete() }
+            }
             refresh()
         }
     }
@@ -75,7 +80,8 @@ class DocumentController(private val context: Context, private val scope: Corout
     private suspend fun persist(document: Document) {
         withContext(Dispatchers.IO) { store.save(document) }
         selected = document
-        refresh()
+        try { refresh() } catch (cancel: CancellationException) { throw cancel }
+        catch (_: Exception) { message = "Changes saved. Refresh the library to update the listing." }
     }
     fun import(uris: List<Uri>, replacement: Int? = null) = runWork {
         val base = selected

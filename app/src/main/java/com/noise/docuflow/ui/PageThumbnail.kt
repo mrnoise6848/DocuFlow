@@ -14,12 +14,7 @@ import kotlinx.coroutines.withContext
 fun PageThumbnail(path: String, modifier: Modifier = Modifier) {
     val bitmap by produceState<android.graphics.Bitmap?>(null, path) {
         value = withContext(Dispatchers.IO) {
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeFile(path, bounds)
-            val options = BitmapFactory.Options().apply {
-                inSampleSize = generateSequence(1) { it * 2 }.first { maxOf(bounds.outWidth, bounds.outHeight) / it <= 600 }
-            }
-            BitmapFactory.decodeFile(path, options)
+            ThumbnailCache.load(path)
         }
     }
     bitmap?.let { Image(it.asImageBitmap(), "Document page", modifier, contentScale = ContentScale.Fit) }
